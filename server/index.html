@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta name="referrer" content="no-referrer" />
+    <title>EXGallary</title>
+    <link rel="stylesheet" type="text/css" href="./CSSs/index.css?v=1">
+</head>
+
+<body>
+    <div class="sidemenu">
+        <div class="headPic">
+
+        </div>
+        <div class="menu">
+            <li class="item" id="profile">
+                <a class="btn" href="/">主页</a>
+
+            </li>
+            <li class="item" id="profile">
+                <a class="btn" href="/watched">订阅</a>
+            </li>
+            <li class="item" id="profile">
+                <a class="btn" href="/popular">热门</a>
+            </li>
+            <li class="item" id="profile">
+                <a class="btn" href="/downloaded">下载</a>
+            </li>
+        </div>
+    </div>
+    <div class="mask" onclick="javascript:closemenu();">
+
+    </div>
+    <div class='searchBar'>
+        <button id="openmenu" onclick="openmenu()"><img src="./souces/menu.png"></button>
+        <input type="text" id="searchWord" onkeydown="enterSearching(event)" />
+        <button id="search" onclick="search()"><img src="./souces/search.png "> </button>
+    </div>
+
+    <div id="wrap">
+
+    </div>
+
+    <script src="./ajaxjs/jquery-1.7.2.js"></script>
+    <script src="./translation.js"></script>
+    <script src="./jsZIP/jszip.min.js"></script>
+    <script src="./jsZIP/FileSaver.js"></script>
+    <script type="text/javascript">
+        var totalAddingImges = 0;//处于请求队列中的图片的数量
+        var preLoadImage = []
+        var wrap = $('#wrap');
+        var index_target = "";//主页目标 
+        function sortNum(a, b) {
+            return (parseInt(b.split("_")[0]) - parseInt(a.split("_")[0]));//JS里具有data  datakeys考虑到搜索需要 动态生成
+        }
+
+        var count = 0, totalCount = 0;// 计数  长度
+        var data = []
+        var dataKeys = [];
+        // fetch("./data.js")
+        //     .then(response => response.json())
+        //     .then(json => {
+        //         data = json;
+        //         totalCount = data.length;
+        //         for (var i = 0; i < data.length; i++) {
+        //             dataKeys.push(data[i].href)
+        //         }
+        //         for (var i = 0; i < data.length; i++, count++) {
+        //             addImg(data[i], i + 1);
+        //         }
+        //     })
+        //     .catch(e => console.log(e));
+
+
+
+        function setSingleBox() {//更新最后一个
+            var wrap = document.getElementById('wrap');
+            var boxs = getClass(wrap, 'box');
+            if (boxs.length == 0) {
+                return;
+            }
+            var boxW = boxs[0].offsetWidth;
+            var colsNum = Math.floor(document.documentElement.clientWidth / boxW);
+
+            for (var i = 1; i < colsNum; i++) {
+                if (boxs[i] != undefined) {
+                    setStyle(boxs[i], 0, boxs[i - 1].offsetWidth * i, i);
+                }
+            }
+            setStyle(boxs[0], 0, 0, 0);
+            wrap.style.width = boxW * colsNum + 'px';
+            var everyH = [];
+            for (var i = 0; i < boxs.length; i++) {
+                if (i < colsNum) {
+                    everyH[i] = boxs[i].offsetHeight;
+                }
+                else {
+                    var miniH = Math.min.apply(Math, everyH);
+                    var miniIndex = 0;
+                    for (index in everyH) {
+                        if (everyH[index] == miniH) {
+                            miniIndex = index;
+                            break;
+                        }
+                    }
+                    if (i == boxs.length - 1) {
+                        setStyle(boxs[i], miniH, boxs[miniIndex].offsetLeft, i);
+                    }
+                    everyH[miniIndex] += boxs[i].offsetHeight;
+                }
+            }
+        }
+
+
+        var addImg_add_Count = 0;
+        var added_count = 0;
+
+        function addImg(Gallery_info, Group_index) {
+            totalAddingImges++;
+            var key = Gallery_info.href.replace("./g/", "");
+            var i = added_count;
+            added_count += 1;
+            preLoadImage[i] = new Image();
+            // preLoadImage[i].src = "./static?url=" + Gallery_info.imgSrc;
+            preLoadImage[i].src = Gallery_info.imgSrc;
+            preLoadImage[i].onerror = function () {
+                preLoadImage[i].src = "./error.jpg"
+                console.log("图片加载失败")
+            }
+            preLoadImage[i].onload = function () {
+                setTimeout(() => {
+                    inHtml = `
+                    <div class="box" id="${"boxDiv_" + key}" >
+                        <div class="info">
+                            <a class="gallaryLink" href="${Gallery_info.href}" target="_blank" >
+                                <div class="pic" id="${"picDiv_" + Gallery_info.href}">
+                                </div>
+                            </a>  
+                            <div class="title">
+                                <a href="javascript:downloadZip('${key}')">${Gallery_info.name}</a>
+                            </div>
+                            <div class="description">
+                                ${Gallery_info.downloaded ? `<img class="downloaded" src="souces/Ok.png" />` : ""}
+                                ${Gallery_info.lang == "chinese" ? `<img class="lang_zh" src="souces/zh.png" />` : ""}    
+                            </div>
+                            
+                        </div>
+                    </div>
+                    `
+
+                    wrap.append(inHtml)
+                    document.getElementById("picDiv_" + Gallery_info.href).appendChild(preLoadImage[i]);
+                    setSingleBox()
+                    // $("#boxDiv_" + Gallery_info.href).toggleClass('active');
+                    totalAddingImges--;
+                }, (Group_index) * 50)
+            }
+        }
+        function rollingScroll() {
+            hidenOrDisplayed()
+            loadImage();
+        }
+        var last_height = $(document).scrollTop();
+        var currentH = -130;
+        function hidenOrDisplayed() {
+            var new_height = $(document).scrollTop();
+            var navigation_height = $('#search').outerHeight();
+            if (new_height < last_height) {
+                if (currentH >= -130) {
+                    currentH = -130;
+                }
+                else {
+                    currentH += (last_height - new_height);
+                    if (currentH >= -130) {
+                        currentH = -130;
+                    }
+                    $('.searchBar').css({
+                        'margin-top': currentH
+                    })
+                }
+
+            }
+            else {
+                if (currentH <= -300) {
+                    currentH = -300;
+                }
+                else {
+                    currentH -= (new_height - last_height);
+                    if (currentH <= -300) {
+                        currentH = -300;
+                    }
+                    $('.searchBar').css({
+                        'margin-top': currentH
+                    })
+                }
+            }
+            last_height = new_height;
+        }
+        function initaling() {
+            url = window.location.href;
+            index_target = url.replace(/^http:\/\/[^/]+/, "./main");
+            loadImage();
+        }
+        var load_img_loack = 0;
+        var load_img_page = -1;
+        function loadImage() {
+            if (data.length == 0 || (totalAddingImges == 0 && getCheck())) {
+
+                if (load_img_loack == 0) {
+                    load_img_loack--;
+                    load_img_page++;
+                    fetch(index_target + (index_target.indexOf("?") != -1 ? "&page=" : "?page=") + load_img_page)
+                        .then(response => response.json())
+                        .then(new_data => {
+                            console.log("添加")
+                            var group_count = 0;
+                            for (var i = 0; i < new_data.length; i++) {
+
+                                if (dataKeys.indexOf(new_data[i].href) != -1) {
+                                    continue;//跳过重复的
+                                    console.log("跳过重复的")
+                                }
+                                group_count++;
+                                addImg(new_data[i], group_count)
+                                data.push(new_data[i])
+                                dataKeys.push(new_data[i].href)
+                            }
+                            load_img_loack++;
+                        })
+                }
+            }
+        }
+        function getLastH() {
+            var boxs = getClass(wrap, 'box');
+            return boxs[boxs.length - 1].offsetTop + boxs[boxs.length - 1].offsetHeight;
+        }
+        function getCheck() {
+            var documentH = document.documentElement.clientHeight;
+            var scrollH = document.documentElement.scrollTop || document.body.scrollTop;
+            return documentH + scrollH >= (getLastH() - 0) ? true : false;
+        }
+        function getClass(wrap, className) {
+            var wrap = document.getElementById('wrap');
+            var obj = wrap.getElementsByTagName('*');
+            var arr = [];
+            for (var i = 0; i < obj.length; i++) {
+                if (obj[i].className == className) {
+                    arr.push(obj[i]);
+                }
+            }
+            return arr;
+        }
+        var lastColsNum = 0;
+        function resizeWindow() {
+            var wrap = document.getElementById('wrap');
+            var boxs = getClass(wrap, 'box');
+            var boxW = boxs[0].offsetWidth;
+            var colsNum = Math.floor(document.documentElement.clientWidth / boxW);
+            if (lastColsNum != colsNum) {
+                updateWindow();
+            }
+        }
+        function updateWindow() {
+            console.log("更新窗口")
+            var wrap = document.getElementById('wrap');
+            var boxs = getClass(wrap, 'box');
+            if (boxs.length == 0) {
+                return;
+            }
+            var boxW = boxs[0].offsetWidth;
+            var colsNum = Math.floor(document.documentElement.clientWidth / boxW);
+            if (lastColsNum != colsNum) {
+                lastColsNum = colsNum;
+                for (var i = 1; i < colsNum; i++) {
+                    if (boxs[i] != undefined) {
+                        setStyle(boxs[i], 0, boxs[i - 1].offsetWidth * i, i);
+                    }
+                }
+            }
+            wrap.style.width = boxW * colsNum + 'px';
+            var everyH = [];
+            for (var i = 0; i < boxs.length; i++) {
+                if (i < colsNum) {
+                    everyH[i] = boxs[i].offsetHeight;
+                }
+                else {
+                    var miniH = Math.min.apply(Math, everyH);
+                    var miniIndex = 0;
+                    for (index in everyH) {
+                        if (everyH[index] == miniH) {
+                            miniIndex = index;
+                            break;
+                        }
+                    }
+                    setStyle(boxs[i], miniH, boxs[miniIndex].offsetLeft, i);
+                    everyH[miniIndex] += boxs[i].offsetHeight;
+                }
+            }
+        }
+
+        var hasetStyle = [];
+        function setStyle(box, top, left, index) {
+            if (hasetStyle.includes(box)) {
+                $(box).css({
+                    'position': 'absolute',
+                    // "transform": "scale(0)",
+                    'top': top,
+                    "left": left,
+                    "opacity": "1"
+                });
+                setTimeout(
+                    function () {
+                        $(box).css({
+                            'top': top,
+                            "transition": " transform .5s",
+                            "transform": "scale(1)",
+                        });
+
+                    }
+                    , 10);
+            } else {
+                hasetStyle.push(box)
+                $(box).css({
+                    'position': 'absolute',
+                    "transform": "scale(0)",
+                    'top': top,
+                    "left": left,
+                    "opacity": "1"
+                });
+                setTimeout(
+                    function () {
+                        $(box).css({
+                            'top': top,
+                            "transition": " transform .5s",
+                            "transform": "scale(1)",
+                        });
+                    }
+                    , 10);
+            }
+        }
+        function enterSearching(event) {
+            console.log('enter')
+            if (event.keyCode == 13) {
+                search();
+            }
+        }
+        function search() {
+            searchWoed = document.getElementById("searchWord").value
+            if ("" == searchWoed) {
+                window.location.href = "index.html"
+                return
+            }
+            console.log("searching" + searchWoed)
+            window.location.href = "?f_search=" + searchWoed
+        }
+        function openmenu() {
+            $('.sidemenu').toggleClass('active');
+            $('.mask').toggleClass('active');
+            $('.mask').css({
+                'width': '100%'
+            })
+        }
+        function closemenu() {
+            $('.sidemenu').toggleClass('active');
+            $('.mask').toggleClass('active');
+            setTimeout(
+                function () {
+                    $('.mask').css({
+                        'width': '0%'
+                    })
+                    console.log('width->0')
+                }
+                , 200);
+        }
+        function changeSortOrder(sortOrder) {
+            if (sortOrder == 'random') {
+                console.log("random sort order")
+                wrap.empty()
+                var dict = new Array();
+                for (var key of dataKeys) {
+                    dict[key] = Math.random();
+                }
+                dataKeys.sort(function (a, b) {
+                    return dict[a] - dict[b];
+                })
+                window.scrollTo(0, 0);
+                count = 0;
+                lastColsNum = 0;
+                last_height = $(document).scrollTop();
+                for (var i = 0; i < 32 && count < totalCount; i++, count++) {
+                    addImg(i, i);
+                }
+                // updateWindow()
+            }
+            else if (sortOrder == 'order') {
+                console.log("order sort order")
+                wrap.empty();
+                window.scrollTo(0, 0);
+                count = 0;
+                lastColsNum = 0;
+                last_height = $(document).scrollTop();
+                dataKeys.sort(sortNum);
+                for (var i = 0; i < 32 && count < totalCount; i++, count++) {
+                    addImg(i, i);
+                }
+                setTimeout(
+                    function () {
+                        rollingScroll()
+                    }
+                    , 1000);
+            }
+        }
+        function menuAnime(itemID) {
+            $("#" + itemID + " .smenu").toggleClass("active");
+        }
+
+
+        function zipImage(info, GID_TOKEN) {
+            for (var i = 0; i < info['pics'].length; i++) {
+                const pic = ("./Gallarys/" + encodeURIComponent(info['info']['fileName']) + "/" + info['pics'][i])
+                tempImageSet[GID_TOKEN]['urls'][i] = pic //先存储地址
+            }
+            tempImageSet[GID_TOKEN]['pics'] = info['pics']//图片文件数组
+            tempImageSet[GID_TOKEN]['length'] = info['pics'].length//总长度
+            tempImageSet[GID_TOKEN]['gallaryName'] = info['info']['gallaryName']//存储文件名
+            tempImageSet[GID_TOKEN]['zipObject'] = new JSZip()//zip对象
+            tempImageSet[GID_TOKEN]['zipObject'].file("info.json", JSON.stringify(info, null, "\t"));
+            getTempImage(GID_TOKEN, 0)
+        }
+
+        function getTempImage(GID_TOKEN, index) {
+            const url = tempImageSet[GID_TOKEN]['urls'][index]//取出地址
+            fetch(url).then(function (response) {
+                return response.blob()
+            }).then(function (blob) {
+                const bar = $('#processbar_' + GID_TOKEN)
+                bar.css({
+                    "width": (240 / tempImageSet[GID_TOKEN]['length']) * index
+                })
+                tempImageSet[GID_TOKEN]['zipObject'].file(tempImageSet[GID_TOKEN]['pics'][index], blob);//直接压缩
+                if (index == tempImageSet[GID_TOKEN]['length'] - 1) {//如果是最后一个
+                    console.log("OK")
+                    tempImageSet[GID_TOKEN]['zipObject'].generateAsync({ type: "blob" })
+                        .then(function (content) {
+                            saveAs(content, tempImageSet[GID_TOKEN]['gallaryName']);
+                            $("#downloadingdMask_" + GID_TOKEN).remove()
+                            bar.css({
+                                "width": 260
+                            })
+                        });
+
+                }
+                else {
+                    getTempImage(GID_TOKEN, index + 1)
+                }
+            })
+        }
+
+        var tempImageSet = {}
+
+        function downloadZip(GID_TOKEN) {
+            console.log(GID_TOKEN)
+            var box = $("#boxDiv_" + GID_TOKEN);
+            console.log(box)
+            const height = box.outerHeight() - 20;
+            box.append(
+                `
+                <div id="downloadingdMask_${GID_TOKEN}" style = "
+                    position: absolute;
+                    top: 10px;
+                    left: 10px;
+                    background-color: rgba(0, 0, 0, 0.1);
+                    width: 280px;
+                    height: ${height}px;
+                    border-radius: 4px;
+                ">
+                <img src="./souces/loading.gif" style="position:absolute;right:5px;bottom:5px;width:20px;"/>
+                </div>
+                        `
+            )
+            fetch("/download/" + GID_TOKEN + "/")
+                .then($("#downloadingdMask_" + GID_TOKEN).remove())
+        }
+
+        window.addEventListener('load', initaling);
+        window.addEventListener('scroll', rollingScroll);
+        window.addEventListener('resize', resizeWindow)
+    </script>
+</body>
