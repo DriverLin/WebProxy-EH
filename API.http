@@ -1,0 +1,32 @@
+### index.html
+GET http://127.0.0.1:8080/
+
+### 主页页面信息
+GET http://127.0.0.1:8080/main/?page=0
+
+### 订阅
+GET http://127.0.0.1:8080/main/watched?page=0
+
+### 热门
+GET http://127.0.0.1:8080/main/popular?page=0
+
+### 已下载的
+GET http://127.0.0.1:8080/main/downloaded?page=0
+
+### 搜索
+GET http://127.0.0.1:8080/main/?f_search=michiking&page=0
+
+### viewing.html
+GET http://127.0.0.1:8080/g/1509125/28d8187926/
+
+### 画廊的信息
+GET http://127.0.0.1:8080/profile/1509125/28d8187926/
+
+### 图片链接
+GET http://127.0.0.1:8080/img/1509125/28d8187926/?index=0
+
+### 启动下载
+GET http://127.0.0.1:8080/download/1509125/28d8187926/
+
+### 删除已下载
+GET http://127.0.0.1:8080/delete_downloaded/1509125/28d8187926/

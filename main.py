@@ -20,13 +20,12 @@ import shutil
 
 cache = Cache()
 
+
 headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36',
     'Cookie': "******"
 }
-SITE = "https://exhentai.org/"
-
-ROOT_PATH = r"./"
+ROOT_PATH = r".\\"
 
 DOWNLOAD_LIST_FILE_PATH = os.path.join(ROOT_PATH, r"downloadList.json")
 DOWNLOAD_PATH = os.path.join(ROOT_PATH, r"download")
@@ -155,6 +154,24 @@ class proxyAccessor:
                 pages = elem.xpath(
                     './div[@class = "gl5t"]/div[2]/div[2]/text()')[0]
                 lang = elem.xpath('./div[@class = "gl6t"]/div/text()')
+
+                uploadTime = elem.xpath(
+                    './div[@class = "gl5t"]/div/div[2]/text()')[0]
+
+                favo = (
+                    len(elem.xpath('./div[@class = "gl5t"]/div/div[2]/@style')) == 1)
+
+                rankText = elem.xpath(
+                    './div[@class = "gl5t"]/div[2]/div[1]/@style')[0]
+
+                rankText.replace("background-position:0px -21px;opacity:1", "")
+                rankValue = re.findall("-?[0-9]+px -?[0-9]+px", rankText)[0]
+                # rank_a, rank_b = re.findall("-?[0-9]+px", rankText)
+                # rank_a = int(rank_a[:-2])
+                # rank_b = int(rank_b[:-2])
+                # rankValue = (5-int(rank_a / -16))*2
+                # if(rank_b == -21):  # -21半星
+                #     rankValue -= 1
                 if len(lang) > 0:
                     lang = lang[0]
                 else:
@@ -167,7 +184,10 @@ class proxyAccessor:
                     "pages": int(pages.replace(" pages", "")),
                     "lang": lang,
                     "downloaded": (href.split("/")[-3]+"_"+href.split("/")[-2] in download_list),
-                    "gid_token": href.split("/")[-3]+"_"+href.split("/")[-2]
+                    "gid_token": href.split("/")[-3]+"_"+href.split("/")[-2],
+                    "favo": favo,  # 下载时钟为false
+                    "uploadtime": uploadTime,  # 下载的无
+                    "rank": rankValue
                 })
         except Exception as e:
             print(e)
@@ -201,7 +221,7 @@ class proxyAccessor:
             self.getAllPictureLinks(url)[index]["href"])
 
 
-pa = proxyAccessor(SITE, headers)
+pa = proxyAccessor("https://exhentai.org/", headers)
 
 
 @route("/main/downloaded", methods="get")
@@ -220,14 +240,21 @@ def downloaded_gallarys():
         title = g_data["title_jpn"]
         if g_data["title_jpn"] == "":
             title = g_data["title"]
+        language = ""
+        if "language:chinese" in g_data["tags"]:
+            language = "chinese"
+
         show_gallery.append({
             "name": title,
-            # "href": "/g/"+str(g_data["gid"])+"/"+g_data["token"]+"/",
             "href": "/g/{}/{}/".format(g_data["gid"], g_data["token"]),
             "imgSrc": "/img/{}/{}/?index=0".format(g_data["gid"], g_data["token"]),
             "category": g_data["category"],
             "pages": g_data["filecount"],
-            "lang":  "",
+            "lang":  language,
+            "downloaded": False,
+            "favo": False,
+            "uploadtime": "",
+            "rank": 1
         })
     return json.dumps(show_gallery)
 
