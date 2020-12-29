@@ -8,17 +8,15 @@ import os
 import urllib.parse as parse
 import vthread
 from urllib import error
-from lxml import etree
 import json
 from bottle import *
 from cacheout import Cache
 import queue
-import time
-import random
 import threading
 import shutil
+from cacheout import LRUCache
+from bs4 import BeautifulSoup
 
-cache = Cache()
 
 
 headers = {
@@ -26,14 +24,46 @@ headers = {
     'Cookie': "******"
 }
 ROOT_PATH = r".\\"
-
 DOWNLOAD_LIST_FILE_PATH = os.path.join(ROOT_PATH, r"downloadList.json")
 DOWNLOAD_PATH = os.path.join(ROOT_PATH, r"download")
 SERVER_FILE = os.path.join(ROOT_PATH, r"server")
 CACHE_PATH = os.path.join(ROOT_PATH, r"cache")
 
+if not os.path.exists(DOWNLOAD_LIST_FILE_PATH):
+    print("List file not exit, creating ... ")
+    json.dump({}, open(DOWNLOAD_LIST_FILE_PATH, 'w'))
 download_list = json.load(open(DOWNLOAD_LIST_FILE_PATH))
 
+
+class multhread_cache(object):
+    def __init__(self):
+        self.cache = LRUCache()
+
+    def memoize(self, func):
+        def new_func(*arg):
+            if (func, *arg) not in self.cache:
+                con = threading.Condition()
+                self.cache.set((func, *arg), [False, con])
+                result = func(*arg)
+                self.cache.set((func, *arg), [True, result])
+                con.acquire()
+                con.notifyAll()
+                con.release()
+                return result
+            else:
+                stause = self.cache.get((func, *arg))
+                if stause[0] == True:
+                    return stause[1]
+                else:
+                    stause[1].acquire()
+                    # print("waiting for notify")
+                    stause[1].wait()
+                    stause[1].release()
+                    return self.cache.get((func, *arg))[1]
+        return new_func
+
+
+cache = multhread_cache()
 
 class proxyAccessor:
     def __init__(self, root, headers):
@@ -41,7 +71,7 @@ class proxyAccessor:
         self.headers = headers
         self.cache = Cache()
 
-    @cache.memoize()
+    @cache.memoize
     def getHTML_mostly_static(self, url):
         print("get html:\t["+urljoin(
             self.root, url)+"]\n")
@@ -56,43 +86,26 @@ class proxyAccessor:
         except Exception as e:
             return "Error"  # 获取网页错误
 
-    def getHTML(self, url):
+    def getHTML(self, url):  # 会出现同一时间 多次请求一同个网页 虽然设置缓存，但是第一次会失效
         return self.getHTML_mostly_static(url)
-        # if "/g/" in urljoin(self.root, url):
-        #     return self.getHTML_mostly_static(url)
-        # try:
-        #     req = urllib.request.Request(url=urljoin(
-        #         self.root, url), headers=self.headers)
-        #     res = urllib.request.urlopen(req)
-        #     html = res.read().decode('utf-8')
-        #     return html
-        # except Exception as e:
-        #     return "Error"  # 获取网页错误
 
-    def getXpath(self, url, xpathStrs):
-        return etree.HTML(self.getHTML(url)).xpath(xpathStrs)
-
-    # @cache.memoize()
     def downloadFile(self, url, filePath, reWrite=False):
         if os.path.exists(filePath) and reWrite == False:
             print("文件存在")
             return
         try:
             urllib.request.urlretrieve(url, filename=filePath)
-            # req = urllib.request.Request(url=(url), headers=self.headers)
-            # res = urllib.request.urlopen(req)
-            # with open(filePath, 'wb') as f:
-            #     f.write(res.read())
         except Exception as e:
             print("Error occurred when downloading\n", e, filePath,)
 
-    @cache.memoize()
+    @cache.memoize
     def getAllPages(self, url):  # 获取所有的页面 返回 [HTML...]
         htmlText = self.getHTML(url)
-        allPages = [htmlText]
-        html = etree.HTML(htmlText)
-        result = html.xpath('//table[@class = "ptt"]/tr/td/a/text()')
+        soup = BeautifulSoup(htmlText, features="html.parser")
+        result = [x.text for x in soup.select(
+            'body > div:nth-child(6) > table > tr > td > a')]
         q = queue.Queue()
+        allPages = [htmlText]
         @vthread.pool(5)
         def multThreadGetHtml(url, index):
             htmlText = self.getHTML(url)
@@ -110,12 +123,14 @@ class proxyAccessor:
                 q.get()
         return allPages
 
-    @cache.memoize()
-    def getPictureLinks(self, htmlText):
-        html = etree.HTML(htmlText)
-        href = html.xpath('//*[@id="gdt"]/div/div/a/@href')
-        # print("href . len = ", len(href))
-        prevSrc = html.xpath('//*[@id="gdt"]/div/div/@style')
+    @cache.memoize
+    def getPictureLinks(self, htmlText):  # 从当前HTML文本中解析可点击的浏览页面地址
+        soup = BeautifulSoup(htmlText, features="html.parser")
+        href = [x.get('href') for x in soup.select(
+            'div.gdtm > div > a')]
+        prevSrc = [x.get('style') for x in soup.select(
+            'div.gdtm > div')]
+
         pattern = r'url([^)]+)'
         return [
             {
@@ -124,7 +139,7 @@ class proxyAccessor:
             } for i in range(len(href))
         ]
 
-    @cache.memoize()
+    @cache.memoize
     def getAllPictureLinks(self, url):  # 得到画廊所有图片链接
         htmlTextS = self.getAllPages(url)
         result = []
@@ -133,49 +148,46 @@ class proxyAccessor:
                 result.append(data)
         return result
 
-    @cache.memoize()
+    @cache.memoize
     def getPictureRawSrc(self, pic_page_url):  # 页面URL 获取真实链接
-        return self.getXpath(pic_page_url, '//*[@id="img"]/@src')[0]
+        soup = BeautifulSoup(self.getHTML(pic_page_url),
+                             features="html.parser")
+        return soup.select("#img")[0].get('src')
 
     def geiMainPageGllarys(self, url):  # 获取主页的展示
-        html = etree.HTML(self.getHTML(url))
+        html = BeautifulSoup(self.getHTML(url), features="html.parser")
         infoS = []
         try:
-            mainElem = html.xpath('//div[@class="gl1t"]')
+            mainElem = html.select('div.gl1t')
             for elem in mainElem:
-                name = elem.xpath(
-                    './a/div[@class = "gl4t glname glink"]/text()')[0]
-                href = elem.xpath(
-                    './a/@href')[0]
-                imgSrc = elem.xpath(
-                    './div[@class = "gl3t"]/a/img/@src')[0]
-                category = elem.xpath(
-                    './div[@class = "gl5t"]/div/div[1]/text()')[0]
-                pages = elem.xpath(
-                    './div[@class = "gl5t"]/div[2]/div[2]/text()')[0]
-                lang = elem.xpath('./div[@class = "gl6t"]/div/text()')
-
-                uploadTime = elem.xpath(
-                    './div[@class = "gl5t"]/div/div[2]/text()')[0]
-
-                favo = (
-                    len(elem.xpath('./div[@class = "gl5t"]/div/div[2]/@style')) == 1)
-
-                rankText = elem.xpath(
-                    './div[@class = "gl5t"]/div[2]/div[1]/@style')[0]
-
-                rankText.replace("background-position:0px -21px;opacity:1", "")
-                rankValue = re.findall("-?[0-9]+px -?[0-9]+px", rankText)[0]
-                # rank_a, rank_b = re.findall("-?[0-9]+px", rankText)
-                # rank_a = int(rank_a[:-2])
-                # rank_b = int(rank_b[:-2])
-                # rankValue = (5-int(rank_a / -16))*2
-                # if(rank_b == -21):  # -21半星
-                #     rankValue -= 1
+                name = elem.select('div.gl4t.glname.glink')[0].text
+                href = elem.select('a:nth-child(1)')[0].get("href")
+                imgSrc = elem.select('div.gl3t > a > img')[0].get("src")
+                category = elem.select(
+                    'div.gl5t > div:nth-child(1) > div:nth-child(1)')[0].text
+                pages = elem.select(
+                    'div.gl5t > div:nth-child(2) > div:nth-child(2)')[0].text
+                lang = elem.select('div.gl6t > div')
                 if len(lang) > 0:
-                    lang = lang[0]
+                    lang = lang[0].text
                 else:
                     lang = ""
+                uploadTime = elem.select(
+                    "div.gl5t > div > div:nth-child(2)")[0].text
+                favo = elem.select(
+                    'div.gl5t > div > div:nth-child(2)')[0].get("style") != None
+                rankText = elem.select(
+                    "div.gl5t > div:nth-child(2) > div:nth-child(1)")[0].get("style")
+                rankText.replace("background-position:0px -21px;opacity:1", "")
+                rankValue = re.findall("-?[0-9]+px -?[0-9]+px", rankText)[0]
+
+                # # rank_a, rank_b = re.findall("-?[0-9]+px", rankText)
+                # # rank_a = int(rank_a[:-2])
+                # # rank_b = int(rank_b[:-2])
+                # # rankValue = (5-int(rank_a / -16))*2
+                # # if(rank_b == -21):  # -21半星
+                # #     rankValue -= 1
+
                 infoS.append({
                     "name": name,
                     "href": href.replace(self.root, "/"),
@@ -194,7 +206,7 @@ class proxyAccessor:
             return []
         return infoS
 
-    @cache.memoize()
+    @cache.memoize
     def getGdata(self, url):  # 只获取页面信息
         apiUrl = urljoin(self.root, "/api.php")
         gallaryUrl = urljoin(self.root, url)
@@ -215,10 +227,13 @@ class proxyAccessor:
             print("error")
             return {}
 
-    @cache.memoize()
-    def get_single_picture(self, url, index):  # 单个画廊的图片的链接  应当为多线程执行或者事件驱动
-        return self.getPictureRawSrc(
-            self.getAllPictureLinks(url)[index]["href"])
+    @cache.memoize
+    def get_single_picture(self, url, index):  # 单个画廊的图片的 '链接'  应当为多线程执行或者事件驱动
+        page_html = self.getHTML_mostly_static(
+            "{}?p={}".format(url, index//40))
+        pics = pa.getPictureLinks(page_html)
+        request_page_url = pics[index % 40]["href"]
+        return self.getPictureRawSrc(request_page_url)
 
 
 pa = proxyAccessor("https://exhentai.org/", headers)
@@ -283,17 +298,12 @@ def g(gid, token):
 @route('/profile/<gid>/<token>/', methods='GET')  # 加载画廊时 就去预加载所有页面 缓存一遍后不再重复加载
 def profile(gid, token):
     download_flag = ("{}_{}".format(gid, token) in download_list)
-
-    def cache_get_page():
-        pa.getAllPictureLinks("/g/{}/{}/".format(gid, token))
-
     gdata = None
     if download_flag:
         gdata = download_list["{}_{}".format(gid, token)]
         print("profile 来自已下载的画廊")
     else:
         gdata = pa.getGdata("/g/{}/{}/".format(gid, token))
-        threading.Thread(target=cache_get_page).start()
 
     info = {}
     for tagname in ['language', 'parody', 'group', 'artist', 'character', 'female', 'male', 'reclass', 'misc']:
@@ -335,9 +345,10 @@ def get_img(gid, token):
         if os.path.exists(os.path.join(download_dir, "{0:08d}.jpg".format(index+1))):
             print("已下载")
             return static_file("{0:08d}.jpg".format(index+1), root=download_dir)
-        imgdata = pa.getAllPictureLinks("/g/{}/{}/".format(gid, token))[index]
-        pa.downloadFile(pa.getPictureRawSrc(imgdata["href"]), os.path.join(
-            CACHE_PATH, picName))
+
+        imgURL = pa.get_single_picture("/g/{}/{}/".format(gid, token), index)
+        pa.downloadFile(imgURL, os.path.join(CACHE_PATH, picName))
+        # redirect(imgURL)#EH跨域严格 不能直接用他的图片URL
         return static_file("{}_{}_{}.jpg".format(gid, token, index), root=CACHE_PATH)
 
 
@@ -372,7 +383,6 @@ class CheckImage(object):
 @route('/download/<gid>/<token>/')
 def download(gid, token):  # 添加到下载记录文件中 如果已经存在，则检查完整性 出错重新下载 尝试次数限制
     print("下载")
-
     key = "{}_{}".format(gid, token)
     download_list[key] = pa.getGdata(
         "/g/{}/{}/".format(gid, token))  # 无论下载完成与否 都存入(更新)画廊信息
@@ -418,7 +428,7 @@ def download(gid, token):  # 添加到下载记录文件中 如果已经存在�
         all_img = pa.getAllPictureLinks("/g/{}/{}/".format(gid, token))
 
         stause = {}
-        @vthread.pool(3)
+        @vthread.pool(8)
         def download_thread(index):
             download_file = os.path.join(
                 download_dir, "{0:08d}.jpg".format(index+1))  # 正式下载 从1开始
@@ -476,4 +486,14 @@ def server_post(path):
     return static_file(path, root=SERVER_FILE)
 
 
-run(host='0.0.0.0', port=8080, reloader=False, server='paste')
+if __name__ == '__main__':
+    run(host='0.0.0.0', port=8080, reloader=False, server='paste')
+    # print(pa.getAllPages("/g/1811756/c38a3e6026/"))
+    # for htmltext in pa.getAllPages("/g/1811756/c38a3e6026/"):
+    #     # print(htmltext)
+    #     print(pa.getPictureLinks(htmltext))
+    # print(pa.getPictureRawSrc("/s/74f348a42c/1811756-2"))
+    # res = pa.geiMainPageGllarys(
+    #     "?f_search=%5BPixiv%5D+Lolicept+%7C+Belko+%5B39123643%5D")
+    # for r in res:
+    #     print(r)

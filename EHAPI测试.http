@@ -1,0 +1,16 @@
+###
+POST https://exhentai.org/api.php 
+User-Agent: 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36',
+Cookie: "__cfduid=dfeaf01896788a2d9cfac6a9af52502f81575294209;event=1575628245;ipb_member_id=3245653;ipb_pass_hash=e82ccb4be395b8727bc0910ff1005d77;ipb_session_id=3a7d2bc35e3d457af8e3106d6b807433;s=342107113;sk=5nk0h6ihbfmq7ro14bnjcbofgpwm"
+
+
+{
+    "method": "gdata",
+    "gidlist": [
+        ["1789484","3d1e3be011"],
+        ["1788994","b9860e6b4f"],
+        ["1788001","739e02300f"],
+        ["1787995","5aa3f27c17"]
+    ],
+    "namespace": 1
+}
